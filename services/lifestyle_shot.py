@@ -72,9 +72,70 @@ def lifestyle_shot_by_text(
         raise Exception(f"Lifestyle shot generation failed: {str(e)}")
 
 
+def lifestyle_shot_by_image(
+    api_key: str,
+    image_data: bytes,
+    reference_image: bytes,
+    placement_type: str = "original",
+    num_results: int = 4,
+    sync: bool = False,
+    original_quality: bool = False,
+    shot_size: List[int] = [1000, 1000],
+    manual_placement_selection: List[str] = ["upper_left"],
+    padding_values: List[int] = [0, 0, 0, 0],
+    foreground_image_size: Optional[List[int]] = None,
+    foreground_image_location: Optional[List[int]] = None,
+    force_rmbg: bool = False,
+    content_moderation: bool = False,
+    sku: Optional[str] = None,
+    enhance_ref_image: bool = True,
+    ref_image_influence: float = 1.0
+    ) -> Dict[str, Any]:
+    ''' Generates a lifestyle shot using image. '''
 
+    # Convert images to base64
+    image_base64 = base64.b64encode(image_data).decode('utf-8')
+    reference_base64 = base64.b64encode(reference_image).decode('utf-8')
+    data = {
+        'file': image_base64,
+        'ref_image_file': reference_base64,
+        'placement_type': placement_type,
+        'num_results': num_results,
+        'sync': sync,
+        'original_quality': original_quality,
+        'force_rmbg': force_rmbg,
+        'content_moderation': content_moderation,
+        'enhance_ref_image': enhance_ref_image,
+        'ref_image_influence': ref_image_influence
+    }
+    url = "https://engine.prod.bria-api.com/v1/product/lifestyle_shot_by_image"
+    headers = {
+        'api_token': api_key,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    }    
+    
+    # Optional Parameters, if required.
+    if placement_type in ['automatic', 'manual_placement', 'custom_coordinates']:
+        data['shot_size'] = shot_size
+    if placement_type == 'manual_placement':
+        data['manual_placement_selection'] = manual_placement_selection
+    if placement_type == 'manual_padding':
+        data['padding_values'] = padding_values
+    if placement_type == 'custom_coordinates':
+        if foreground_image_size:
+            data['foreground_image_size'] = foreground_image_size
+        if foreground_image_location:
+            data['foreground_image_location'] = foreground_image_location
+    if sku:
+        data['sku'] = sku
 
-def lifestyle_shot_by_image():
-    pass
-
-
+    try:
+        print(f"Making request to: {url}")
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status() 
+        print(f"Response status: {response.status_code}")
+        return response.json()
+    
+    except Exception as e:
+        raise Exception(f"Lifestyle shot generation failed: {str(e)}") 
