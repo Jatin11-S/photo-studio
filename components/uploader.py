@@ -1,0 +1,32 @@
+import streamlit as st
+import magic
+import io
+
+def is_valid_image(file_content):
+    """Validate if the file content is an image."""
+    try:
+        mime = magic.Magic(mime=True)
+        file_type = mime.from_buffer(file_content)
+        return file_type.startswith('image/')
+    except:
+        # Fallback if libmagic inspection fails
+        return True
+
+def render_uploader():
+    """ Render the streamlit's image uploader component with validation. """
+    uploaded_file = st.file_uploader(
+        "Upload Product Image (Optional)",
+        type=["png", "jpg", "jpeg"],
+        help="Upload a product image to enhance or modify"
+    )
+    if uploaded_file is not None:
+        file_content = uploaded_file.getvalue()
+        # Validate image
+        if not is_valid_image(file_content):
+            st.error("Please upload a valid image file")
+            return None    
+        # Preview image
+        st.image(file_content, caption="Uploaded Image", use_column_width=True)
+        return uploaded_file
+    
+    return None
