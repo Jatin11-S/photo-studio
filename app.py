@@ -1,17 +1,17 @@
-import streamlit as st
 import os
+import streamlit as st
 from dotenv import load_dotenv
-from services import (
+from PIL import Image
+from photo_services import (
     lifestyle_shot_by_image,
     lifestyle_shot_by_text,
-    add_shadow,
+    add_shadows,
     create_packshot,
     enhance_prompt,
     generative_fill,
     generate_hd_image,
     erase_foreground
 )
-from PIL import Image
 import io
 import requests
 import json

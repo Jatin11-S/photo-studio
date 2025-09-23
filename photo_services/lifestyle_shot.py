@@ -92,7 +92,6 @@ def lifestyle_shot_by_image(
     ref_image_influence: float = 1.0
     ) -> Dict[str, Any]:
     ''' Generates a lifestyle shot using image. '''
-
     # Convert images to base64
     image_base64 = base64.b64encode(image_data).decode('utf-8')
     reference_base64 = base64.b64encode(reference_image).decode('utf-8')
