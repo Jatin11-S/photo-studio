@@ -62,7 +62,7 @@ def download_image(url):
         return None
 
 def main():
-    st.title('AI Photo Studio')
+    st.title('Photo Studio')
     initialize_session_state()
     # Sidebar for API key
     with st.sidebar:
@@ -150,18 +150,34 @@ def main():
                             medium="art" if style != "Realistic" else "photography",
                             content_moderation=True
                         )
+                        # After you get `result` from generate_hd_image(...)
                         if result:
-                            # Handle different response formats
-                            if "result_url" in result:
+                            # 1) Direct single URL
+                            if isinstance(result, dict) and "result_url" in result and result["result_url"]:
                                 st.session_state.edited_image = result["result_url"]
                                 st.success("✨ Image generated successfully!")
-                            elif "result_urls" in result:
-                                st.session_state.edited_image = result["result_urls"]
+                            # 2) Direct multiple URLs
+                            elif isinstance(result, dict) and "result_urls" in result and result["result_urls"]:
+                                # Keep the first one for preview; store all if you want a gallery
+                                st.session_state.edited_image = result["result_urls"][0]
+                                st.session_state.generated_images = result["result_urls"]
                                 st.success("✨ Image generated successfully!")
+                            # 3) Nested list under result -> [ { "urls": [...] }, ... ]
+                            elif isinstance(result, dict) and "result" in result and isinstance(result["result"], list):
+                                urls = []
+                                for item in result["result"]:
+                                    if isinstance(item, dict) and "urls" in item and item["urls"]:
+                                        urls.extend(item["urls"])
+                                if urls:
+                                    st.session_state.edited_image = urls[0]
+                                    st.session_state.generated_images = urls
+                                    st.success("✨ Image generated successfully!")
+                                else:
+                                    st.error("Received response but found no URLs.")
+                                    st.json(result)  # helpful debug
                             else:
                                 st.error("Unexpected response format")
-                                st.json(result)
-                                
+                                st.json(result)    
                     except Exception as e:
                         st.error(f"Error generating images: {str(e)}")
         # Display result
