@@ -191,11 +191,314 @@ def main():
                     "generated_image.png",
                     "image/png"
                 )
+    # --- Product Photo Tab ---
     with tabs[1]:
         st.header("Product Photo")
-        st.write("Upload a product image and choose editing options.")
-        # Add product photography functionality
+
+        uploaded_file = st.file_uploader(
+            "Upload Product Image",
+            type=["png", "jpg", "jpeg"],
+            key="product_upload"
+        )
+
+        def parse_urls(payload):  # Returns unique ordered lists of Image URLs from payload dict
+            urls = []
+            if not isinstance(payload, dict):
+                return urls
+            if "result_url" in payload and payload["result_url"]:
+                urls.append(payload["result_url"])
+            if "result_urls" in payload and payload["result_urls"]:
+                urls.extend(payload["result_urls"])
+            if "result" in payload and isinstance(payload["result"], list):
+                for item in payload["result"]:
+                    if isinstance(item, dict) and "urls" in item and item["urls"]:
+                        urls.extend(item["urls"])
+            # Deduplicate, and keep order in uniq list
+            seen = set()
+            uniq = []
+            for u in urls:
+                if u and u not in seen:
+                    uniq.append(u)
+                    seen.add(u)
+            return uniq
         
+        colL, colR = st.columns(2)
+        with colL:
+            if uploaded_file:
+                st.image(uploaded_file, caption="Original Image", use_column_width=True)
+        if not uploaded_file:
+            st.info('Upload an image to continue.')
+            st.stop()
+
+        # Action chooser
+        st.subheader("Actions")
+        action = st.selectbox(
+            "Choose an action",
+            ["Create Packshot", "Add Shadow", "Lifestyle Shot"]
+        )
+
+        # ---Create Packshot---
+        if action == 'Create Packshot':
+            c1, c2 = st.columns(2)
+            with c1:
+                bg_color = st.color_picker("Background Color", "#FFFFFF")
+                sku = st.text_input("SKU (optional)", "")
+            with c2:
+                force_rmbg = st.checkbox("Force Background Removal", False)
+                content_moderation = st.checkbox("Enable Content Moderation", False)
+            
+            if st.button("Create Packshot", type="primary"):
+                try:
+                    with st.spinner("Creating a product packshot..."):
+                        result = create_packshot(
+                            api_key = st.session_state.api_key,
+                            image_data = uploaded_file.getvalue(),
+                            background_color = bg_color,
+                            sku = sku if sku else None,
+                            force_rmbg = force_rmbg,
+                            content_moderation = content_moderation
+                        )
+                    urls = parse_urls(result)
+                    if urls:
+                        st.success('✨ Packshot created successfully!')
+                        st.image(urls[0], caption="Packshot", use_column_width=True)
+                        st.session_state.edited_image = urls[0]
+                        # Download button
+                        img_bytes = download_image(urls[0])
+                        if img_bytes:
+                            st.download_button(
+                                "⬇️ Download",
+                                img_bytes,
+                                "packshot.png",
+                                "image/png"
+                            )
+                        else:
+                            st.error("No result URL found.")
+                            st.json(result)
+                except Exception as e:
+                    st.error(f"Error creating packshot: {e}")
+
+        # ---Add Shadows---   
+        if action == 'Add Shadow':
+            c1,c2 = st.columns(2)
+            with c1:
+                shadow_type = st.selectbox("Shadow Type", ["Natural", "Drop", "Float"])
+                bg_color = st.color_picker("Background Color (optional)", "#FFFFFF")
+                use_transparent_bg = st.checkbox("Use Transparent Background", True)
+                shadow_color = st.color_picker("Shadow Color", "#000000")
+                sku = st.text_input("SKU (optional)", "")
+                st.subheader("Offset")
+                offset_x = st.slider("X Offset", -50, 50, 0)
+                offset_y = st.slider("Y Offset", -50, 50, 15)     
+            with c2:
+                shadow_intensity = st.slider("Shadow Intensity", 0, 100, 60)
+                # Blur suggestion defaults
+                default_blur = 15 if shadow_type.lower() in ["natural", "drop"] else 20
+                shadow_blur = st.slider("Shadow Blur", 0, 50, default_blur)
+                # Float-only options
+                shadow_width = None
+                shadow_height = 70
+                if shadow_type == "Float":
+                    st.subheader("Float Shadow")
+                    shadow_width = st.slider("Shadow Width", -100, 100, 0)
+                    shadow_height = st.slider("Shadow Height", -100, 100, 70)
+                force_rmbg = st.checkbox("Force Background Removal", False)
+                content_moderation = st.checkbox("Enable Content Moderation", False)
+            
+            if st.button('Add Shadow', type='primary'):
+                try:
+                    with st.spinner('Adding some shadow effects...'):
+                        result = add_shadows(
+                        api_key = st.session_state.api_key,
+                        image_data = uploaded_file.getvalue(),
+                        shadow_type = "float" if shadow_type == "Float" else "regular",
+                        background_color = None if use_transparent_bg else bg_color,
+                        shadow_color = shadow_color,
+                        shadow_offset = [offset_x, offset_y],
+                        shadow_intensity = shadow_intensity,
+                        shadow_blur = shadow_blur,
+                        shadow_width = shadow_width,
+                        shadow_height = shadow_height,
+                        sku = sku if sku else None,
+                        force_rmbg = force_rmbg,
+                        content_moderation = content_moderation
+                    )
+                    urls = parse_urls(result)
+                    if urls:
+                        st.success('✨ Shadow added successfully!')
+                        st.image(urls[0], caption="Shadow Result", use_column_width=True)
+                        st.session_state.edited_image = urls[0]
+                        img_bytes = download_image(urls[0])
+                        if img_bytes:
+                            st.download_button(
+                                "⬇️ Download",
+                                img_bytes,
+                                "shadow_result.png",
+                                "image/png"
+                            )
+                    else:
+                        st.error("No result URL found.")
+                        st.json(result)
+                except Exception as e:
+                    st.error(f"Error adding shadows: {e}")
+
+        # ---Lifestyle Shot---
+        if action == 'Lifestyle Shot':
+            shot_type = st.radio("Shot Type", ["Text Prompt", "Reference Image"])
+            left, right = st.columns(2)
+
+            with left:
+                placement_type = st.selectbox(
+                    "Placement Type",
+                    ["Original", "Automatic", "Manual Placement", "Manual Padding", "Custom Coordinates"]
+                )
+                num_results = st.slider("Number of Results", 1, 8, 4)
+                sync_mode = st.checkbox("Synchronous Mode", True, help="Wait for results rather than polling")
+                original_quality = st.checkbox("Original Quality", False)
+
+                # Placement-specific inputs
+                positions = []
+                if placement_type == "Manual Placement":
+                    positions = st.multiselect(
+                        "Select Positions",
+                        [
+                            "Upper Left", "Upper Right", "Bottom Left", "Bottom Right",
+                            "Right Center", "Left Center", "Upper Center",
+                            "Bottom Center", "Center Vertical", "Center Horizontal"
+                        ],
+                        ["Upper Left"]
+                    )
+                elif placement_type == "Manual Padding":
+                    st.subheader("Padding (px)")
+                    pad_left = st.number_input("Left", 0, 1000, 0)
+                    pad_right = st.number_input("Right", 0, 1000, 0)
+                    pad_top = st.number_input("Top", 0, 1000, 0)
+                    pad_bottom = st.number_input("Bottom", 0, 1000, 0)
+                if placement_type in ["Automatic", "Manual Placement", "Custom Coordinates"]:
+                    st.subheader("Shot Size")
+                    shot_width = st.number_input("Width", 100, 2000, 1000)
+                    shot_height = st.number_input("Height", 100, 2000, 1000)
+
+            with right:
+                if placement_type == "Custom Coordinates":
+                    st.subheader("Product Position")
+                    fg_width = st.number_input("Product Width", 50, 1000, 500)
+                    fg_height = st.number_input("Product Height", 50, 1000, 500)
+                    fg_x = st.number_input("X", -500, 1500, 0)
+                    fg_y = st.number_input("Y", -500, 1500, 0)
+
+                sku = st.text_input("SKU (optional)")
+                force_rmbg = st.checkbox("Force Background Removal", False)
+                content_moderation = st.checkbox("Enable Content Moderation", False)  
+                exclude_elements = None
+                fast_mode = True
+                optimize_desc = True
+                if shot_type == "Text Prompt":
+                    fast_mode = st.checkbox("Fast Mode", True)
+                    optimize_desc = st.checkbox("Optimize Description", True)
+                    if not fast_mode:
+                        exclude_elements = st.text_area("Exclude Elements (optional)")  
+                
+                enhance_ref = True
+                ref_influence = 1.0
+                ref_uploader = None
+                if shot_type == "Reference Image":
+                    enhance_ref = st.checkbox("Enhance Reference Image", True)
+                    ref_influence = st.slider("Reference Influence", 0.0, 1.0, 1.0)
+                    ref_uploader = st.file_uploader(
+                        "Upload Reference Image",
+                        type=["png", "jpg", "jpeg"],
+                        key="ref_upload"
+                )
+
+            manual_placements = []
+            if placement_type == "Manual Placement":
+                manual_placements = [p.lower().replace(" ", "_") for p in positions] 
+
+            # Build common args
+            size = [shot_width, shot_height] if placement_type != "Original" else [1000, 1000]
+            padding = [0, 0, 0, 0]
+            if placement_type == "Manual Padding":
+                padding = [pad_left, pad_right, pad_top, pad_bottom]
+            fg_size = [fg_width, fg_height] if placement_type == "Custom Coordinates" else None
+            fg_loc = [fg_x, fg_y] if placement_type == "Custom Coordinates" else None  
+
+            # Handlers
+            if shot_type == "Text Prompt":
+                scene_prompt = st.text_area("Describe the environment")
+                if st.button("Generate Lifestyle Shot", type="primary") and scene_prompt:
+                    try:
+                        with st.spinner("Generating lifestyle shot..."):
+                            result = lifestyle_shot_by_text(
+                                api_key=st.session_state.api_key,
+                                image_data=uploaded_file.getvalue(),
+                                scene_description=scene_prompt,
+                                placement_type=placement_type.lower().replace(" ", "_"),
+                                num_results=num_results,
+                                sync=sync_mode,
+                                fast=fast_mode,
+                                optimize_description=optimize_desc,
+                                shot_size=size,
+                                original_quality=original_quality,
+                                exclude_elements=exclude_elements if not fast_mode else None,
+                                manual_placement_selection=manual_placements if manual_placements else ["upper_left"],
+                                padding_values=padding,
+                                foreground_image_size=fg_size,
+                                foreground_image_location=fg_loc,
+                                force_rmbg=force_rmbg,
+                                content_moderation=content_moderation,
+                                sku=sku if sku else None
+                            )
+                        urls = parse_urls(result)
+                        if urls:
+                            st.success("✨ Lifestyle shot generated!")
+                            st.image(urls[0], use_column_width=True)
+                            st.session_state.edited_image = urls[0]
+                            if len(urls) > 1:
+                                st.session_state.generated_images = urls
+                        else:
+                            st.error("No URLs found in response.")
+                            st.json(result)
+                    except Exception as e:
+                        st.error(f"Error: {e}") 
+
+            else:  # Reference Image
+                if st.button("Generate Lifestyle Shot (Ref Image)", type="primary") and ref_uploader:
+                    try:
+                        with st.spinner("Generating lifestyle shot..."):
+                            result = lifestyle_shot_by_image(
+                                api_key=st.session_state.api_key,
+                                image_data=uploaded_file.getvalue(),
+                                reference_image=ref_uploader.getvalue(),
+                                placement_type=placement_type.lower().replace(" ", "_"),
+                                num_results=num_results,
+                                sync=sync_mode,
+                                shot_size=size,
+                                original_quality=original_quality,
+                                manual_placement_selection=manual_placements if manual_placements else ["upper_left"],
+                                padding_values=padding,
+                                foreground_image_size=fg_size,
+                                foreground_image_location=fg_loc,
+                                force_rmbg=force_rmbg,
+                                content_moderation=content_moderation,
+                                sku=sku if sku else None,
+                                enhance_ref_image=enhance_ref,
+                                ref_image_influence=ref_influence
+                            )
+                        urls = parse_urls(result)
+                        if urls:
+                            st.success("✨ Lifestyle shot generated!")
+                            st.image(urls[0], use_column_width=True)
+                            st.session_state.edited_image = urls[0]
+                            if len(urls) > 1:
+                                st.session_state.generated_images = urls
+                        else:
+                            st.error("No URLs found in response.")
+                            st.json(result)
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                    
+
     with tabs[2]:
         st.header("Generative Fill")
         st.write("Draw a mask and describe what to generate.")
