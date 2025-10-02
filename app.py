@@ -498,16 +498,268 @@ def main():
                     except Exception as e:
                         st.error(f"Error: {e}")
                     
-
+    # --- Generative Fill Tab ---
     with tabs[2]:
         st.header("Generative Fill")
         st.write("Draw a mask and describe what to generate.")
-        # Add generative fill functionality
+        # Uploader
+        uploaded_file = st.file_uploader(
+            "Upload Image",
+            type=["png", "jpg", "jpeg"],
+            key="fill_upload"
+        )
+        # Helper to normalize response envelopes to a list of URLs
+        def parse_urls(payload):
+            urls = []
+            if isinstance(payload, dict):
+                if "result_url" in payload and payload["result_url"]:
+                    urls.append(payload["result_url"])
+                if "result_urls" in payload and payload["result_urls"]:
+                    urls.extend(payload["result_urls"])
+                if "urls" in payload and payload["urls"]:
+                    urls.extend(payload["urls"])
+                if "result" in payload and isinstance(payload["result"], list):
+                    for item in payload["result"]:
+                        if isinstance(item, dict) and "urls" in item and item["urls"]:
+                            urls.extend(item["urls"])
+            # dedupe preserve order
+            seen, uniq = set(), []
+            for u in urls:
+                if u and u not in seen:
+                    uniq.append(u)
+                    seen.add(u)
+            return uniq
+        
+        if uploaded_file:
+            c1, c2 = st.columns([2,1])
+
+            with c1:
+                # Display the original image
+                st.image(uploaded_file, caption="Original Image", use_column_width=True)
+                img = Image.open(uploaded_file)
+                img_width, img_height = img.size
+
+                aspect_ratio = img_height / img_width
+                canvas_width = min(img_width, 800)  # constrain canvas for UX
+                canvas_height = int(canvas_width * aspect_ratio)
+
+                # Ensure RGB for canvas
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                # Resize to canvas dimensions so mask aligns
+                img = img.resize((canvas_width, canvas_height))
+
+                # Canvas controls, a freedraw streamlit canvas
+                stroke_width = st.slider("Brush width", 1, 50, 20)
+                stroke_color = st.color_picker("Brush color", "#FFFFFF")
+                drawing_mode = "freedraw"
+
+                # Draw on canvas
+                canvas_result = st_canvas(
+                    fill_color = "rgba(255, 255, 255, 0.0)",  # transparent fill
+                    stroke_width = stroke_width,
+                    stroke_color = stroke_color,
+                    background_color = "",
+                    background_image = img,  # PIL Image
+                    update_streamlit = True,
+                    height = canvas_height,
+                    width = canvas_width,
+                    drawing_mode = drawing_mode,
+                    key = "gen_fill_canvas",
+                )
+
+                # Options for generation
+                st.subheader("Generation Options")
+                prompt = st.text_area("Describe what to generate in the masked area")
+                negative_prompt = st.text_area("Describe what to avoid (optional)")
+
+                cA, cB = st.columns(2)
+                with cA:
+                    num_results = st.slider("Number of results", 1, 4, 1)
+                    sync_mode = st.checkbox("Synchronous Mode", True, help="Wait for results instead of async URLs")
+                with cB:
+                    seed = st.number_input("Seed (optional)", min_value=0, value=0, help="Use same seed to reproduce results")
+                    content_moderation = st.checkbox("Enable Content Moderation", False, key = 'genfill_content_moderation')
+                
+                # Generate button
+                if st.button("🎨 Generate", type="primary", key="gen_fill_btn"):
+                    # Validate inputs
+                    if not prompt:
+                        st.error("Please enter a prompt describing what to generate.")
+                        st.stop()
+                    if canvas_result.image_data is None:
+                        st.error("Please draw a mask on the image first.")
+                        st.stop()
+                # Covert mask result to mask bytes
+                mask_img = Image.fromarray(canvas_result.image_data.astype('uint8'), mode='RGBA').convert('L')
+                mask_bytes_io = io.BytesIO()
+                mask_img.save(mask_bytes_io, format='PNG')
+                mask_bytes = mask_bytes_io.getvalue()
+                # Read original image bytes
+                image_bytes = uploaded_file.getvalue()
+
+                # Call service
+                try:
+                    with st.spinner("🎨 Generating..."):
+                        result = generative_fill(
+                            api_key=st.session_state.api_key,
+                            image_data=image_bytes,
+                            mask_data=mask_bytes,
+                            prompt=prompt,
+                            negative_prompt=negative_prompt if negative_prompt else None,
+                            num_results=num_results,
+                            sync=sync_mode,
+                            seed=seed if seed != 0 else None,
+                            content_moderation=content_moderation,
+                            mask_type="manual"
+                        )
+                    urls = parse_urls(result)
+                    if urls:
+                        # Show first in right column, more as a gallery
+                        st.session_state.edited_image = urls[0]
+                        st.session_state.generated_images = urls
+                        st.success("✨ Generation complete!")
+                    else:
+                        st.error("No URLs found in response.")
+                        st.json(result)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    
+            with c2:
+                # Result preview + download
+                if st.session_state.get("edited_image"):
+                    st.image(st.session_state.edited_image, caption="Generated Result", use_column_width=True)
+                    # Optional multi-image gallery
+                    if st.session_state.get("generated_images") and len(st.session_state.generated_images) > 1:
+                        st.markdown("More variations:")
+                        cols = st.columns(min(4, len(st.session_state.generated_images)))
+                        for c, u in zip(cols, st.session_state.generated_images):
+                            with c:
+                                st.image(u, use_column_width=True)
+
+                    # Download button
+                    img_bytes = download_image(st.session_state.edited_image)
+                    if img_bytes:
+                        st.download_button(
+                            "⬇️ Download Result",
+                            img_bytes,
+                            "generated_fill.png",
+                            "image/png"
+                        )
+        else:
+            st.info("Upload an image to start Generative Fill.")               
         
     with tabs[3]:
         st.header("Erase Elements")
         st.write("Select areas to remove from your image.")
-        # Add erase functionality
+        
+        # Upload
+        uploaded_file = st.file_uploader(
+            "Upload Image",
+            type=["png", "jpg", "jpeg"],
+            key="erase_upload"
+        )
+        def parse_urls(payload):
+            urls = []
+            if isinstance(payload, dict):
+                if "result_url" in payload and payload["result_url"]:
+                    urls.append(payload["result_url"])
+                if "result_urls" in payload and payload["result_urls"]:
+                    urls.extend(payload["result_urls"])
+                if "urls" in payload and payload["urls"]:
+                    urls.extend(payload["urls"])
+                if "result" in payload and isinstance(payload["result"], list):
+                    for item in payload["result"]:
+                        if isinstance(item, dict) and "urls" in item and item["urls"]:
+                            urls.extend(item["urls"])
+            # dedupe keep order
+            seen, uniq = set(), []
+            for u in urls:
+                if u and u not in seen:
+                    uniq.append(u); seen.add(u)
+            return uniq
+        
+        if uploaded_file:
+            c1, c2 = st.columns([2,1])
+            with c1:
+                st.image(uploaded_file, caption="Original Image", use_column_width=True)
+
+                # Prepare image for canvas
+                img = Image.open(uploaded_file)
+                img_w, img_h = img.size
+                aspect_ratio = img_h / img_w
+                canvas_w = min(img_w, 800)
+                canvas_h = int(canvas_w * aspect_ratio)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                img = img.resize((canvas_w, canvas_h))
+
+                 # Brush and canvas
+                stroke_width = st.slider("Brush width", 1, 50, 20, key="erase_brush_width")
+                stroke_color = st.color_picker("Brush color", "#FFFFFF", key="erase_brush_color")
+
+                canvas_result = st_canvas(
+                    fill_color = "rgba(255, 255, 255, 0.0)",
+                    stroke_width = stroke_width,
+                    stroke_color = stroke_color,
+                    background_color = "",
+                    background_image = img,     # PIL Image
+                    height = canvas_h,
+                    width = canvas_w,
+                    drawing_mode = "freedraw",
+                    key = "erase_canvas",
+                )
+                st.subheader("Options")
+                content_moderation = st.checkbox("Enable Content Moderation", False, key="erase_content_mod")
+
+                # Action
+                if st.button("🧼 Erase Selected Area", key="erase_btn"):
+                    if canvas_result.image_data is None:
+                        st.warning("Please draw over the area to erase.")
+                        st.stop()
+
+                try:
+                    with st.spinner("Erasing..."):
+                        # Send original image bytes
+                        result = erase_foreground(
+                            api_key=st.session_state.api_key,
+                            image_data=uploaded_file.getvalue(),
+                            content_moderation=content_moderation
+                        )
+                    urls = parse_urls(result)
+                    if urls:
+                        st.success("✨ Area erased successfully!")
+                        st.session_state.edited_image = urls[0]
+                        st.session_state.generated_images = urls
+                    else:
+                        st.error("No result URL found in response.")
+                        st.json(result)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            with c2:
+                if st.session_state.get("edited_image"):
+                    st.image(st.session_state.edited_image, caption="Result", use_column_width=True)
+
+                    # Optional: show other URLs, if any
+                    if st.session_state.get("generated_images") and len(st.session_state.generated_images) > 1:
+                        st.markdown("More results:")
+                        cols = st.columns(min(4, len(st.session_state.generated_images)))
+                        for c, u in zip(cols, st.session_state.generated_images):
+                            with c:
+                                st.image(u, use_column_width=True)
+
+                    # Download
+                    img_bytes = download_image(st.session_state.edited_image)
+                    if img_bytes:
+                        st.download_button(
+                            "⬇️ Download Result",
+                            img_bytes, 
+                            "erased_image.png",
+                            "image/png",
+                            key="erase_download"
+                        )
+        else:
+            st.info("Upload an image to start erasing.")
 
 if __name__ == "__main__":
     main()            
